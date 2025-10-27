@@ -1,4 +1,4 @@
-# mosq-pg-v5 — Mosquitto v5 plugin (Go + PostgreSQL)
+# mosq — Mosquitto v5 plugin (Go + PostgreSQL)
 
 **What it does:** Authenticate on CONNECT and authorize on PUBLISH/SUBSCRIBE by looking up users/ACLs in PostgreSQL — no HTTP hop, low latency.
 
@@ -81,9 +81,9 @@ mosquitto_pub -h 127.0.0.1 -u alice -P 'alice-password' -t devices/bob/up -m x
 
 Build an image that includes the plugin and a sample config:
 ```bash
-docker build -t mosq-pg-v5:latest .
+docker build -t mosq:latest .
 # Run Mosquitto (expects a Postgres reachable at 'postgres:5432' by default in mosquitto.conf)
-docker run --rm -it --name mosq --network host mosq-pg-v5:latest
+docker run --rm -it --name mosq --network host mosq:latest
 ```
 
 > Tip: In production, mount your own `mosquitto.conf` and point `plugin_opt_pg_dsn` to a secured DSN

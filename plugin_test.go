@@ -108,31 +108,3 @@ func TestCtxTimeout(t *testing.T) {
 		t.Fatalf("ctxTimeout with timeout<=0 should return Background context")
 	}
 }
-
-func TestMqttMatch(t *testing.T) {
-	t.Parallel()
-	clientID := "client123"
-	username := "alice"
-	tests := []struct {
-		name    string
-		pattern string
-		topic   string
-		want    bool
-	}{
-		{"exact match", "devices/{username}/state", "devices/alice/state", true},
-		{"hash wildcard", "devices/{username}/#", "devices/alice/sensors/temp", true},
-		{"plus wildcard", "devices/+/data", "devices/foo/data", true},
-		{"client placeholder", "clients/{clientid}/status", "clients/client123/status", true},
-		{"mismatch", "devices/{username}/state", "devices/bob/state", false},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := mqttMatch(tc.pattern, tc.topic, username, clientID); got != tc.want {
-				t.Fatalf("mqttMatch(%q, %q)=%v want %v", tc.pattern, tc.topic, got, tc.want)
-			}
-		})
-	}
-}

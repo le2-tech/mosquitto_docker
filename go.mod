@@ -1,4 +1,4 @@
-module mosq-pg-v5
+module mosq
 
 go 1.23.0
 

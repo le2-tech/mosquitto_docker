@@ -26,14 +26,14 @@ clean:
 
 # Build a runnable Mosquitto image with the plugin baked in
 docker-build:
-	docker build -f Dockerfile-debian -t mosq-pg-v5:latest .
+	docker build -f Dockerfile-debian -t mosquitto:latest .
 
 # Quick run; assumes a postgres reachable per mosquitto.conf DSN
 docker-run:
-	docker run --rm -it --name mosq \
+	docker run --rm -it \
 	  --network host \
 	  -v $(PWD)/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
-	  mosq-pg-v5:latest
+	  mosquitto:latest
 
 local-run: build
 	mosquitto -c ./mosquitto.conf -v

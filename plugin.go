@@ -42,20 +42,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	logPrefix        = "mosq-pg"
-	defaultTimeoutMS = 1500
-)
-
 var (
 	pid         *C.mosquitto_plugin_id_t
 	pool        *pgxpool.Pool
 	poolMu      sync.RWMutex
 	pgDSN       string // postgres://user:pass@host:5432/db?sslmode=verify-full
-	timeout     = time.Duration(defaultTimeoutMS) * time.Millisecond
+	timeout     = time.Duration(1500) * time.Millisecond
 	failOpen    bool
 	enforceBind bool
-	debugLogs   = envBool("MOSQ_PG_DEBUG")
 )
 
 func mosqLog(level C.int, msg string, args ...any) {
@@ -65,9 +59,6 @@ func mosqLog(level C.int, msg string, args ...any) {
 	cs := C.CString(msg)
 	defer C.free(unsafe.Pointer(cs))
 	C.go_mosq_log(level, cs)
-	if debugLogs {
-		fmt.Fprintf(os.Stderr, "mosq-pg: %s\n", msg)
-	}
 }
 
 func cstr(s *C.char) string {
@@ -77,8 +68,10 @@ func cstr(s *C.char) string {
 	return C.GoString(s)
 }
 func envBool(name string) bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
+	if v, ok := parseBoolOption(os.Getenv(name)); ok {
+		return v
+	}
+	return false
 }
 func safeDSN(dsn string) string {
 	if dsn == "" {
@@ -115,7 +108,7 @@ func parseTimeoutMS(v string) (time.Duration, bool) {
 	return time.Duration(n) * time.Millisecond, true
 }
 
-func buildPoolConfig() (*pgxpool.Config, error) {
+func poolConfig() (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(pgDSN)
 	if err != nil {
 		return nil, err
@@ -127,36 +120,37 @@ func buildPoolConfig() (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
-func ensurePool(ctx context.Context) (*pgxpool.Pool, bool, error) {
+func ensurePool(ctx context.Context) (*pgxpool.Pool, error) {
 	poolMu.RLock()
 	current := pool
 	poolMu.RUnlock()
 	if current != nil {
-		return current, false, nil
+		return current, nil
 	}
 
 	poolMu.Lock()
 	defer poolMu.Unlock()
 
 	if pool != nil {
-		return pool, false, nil
+		return pool, nil
 	}
 
-	cfg, err := buildPoolConfig()
+	cfg, err := poolConfig()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	newPool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if err := newPool.Ping(ctx); err != nil {
 		newPool.Close()
-		return nil, false, err
+		return nil, err
 	}
 	pool = newPool
-	return pool, true, nil
+	mosqLog(C.MOSQ_LOG_INFO, "mosq-pg: connected to PostgreSQL successfully")
+	return pool, nil
 }
 
 func sha256PwdSalt(pwd, salt string) string {
@@ -201,22 +195,22 @@ func go_mosq_plugin_init(id *C.mosquitto_plugin_id_t, userdata *unsafe.Pointer,
 			if dur, ok := parseTimeoutMS(v); ok {
 				timeout = dur
 			} else {
-				mosqLog(C.MOSQ_LOG_WARNING, "%s: invalid timeout_ms=%q, keeping existing value %dms",
-					logPrefix, v, int(timeout/time.Millisecond))
+				mosqLog(C.MOSQ_LOG_WARNING, "mosq-pg: invalid timeout_ms=%q, keeping existing value %dms",
+					v, int(timeout/time.Millisecond))
 			}
 		case "fail_open":
 			if parsed, ok := parseBoolOption(v); ok {
 				failOpen = parsed
 			} else {
-				mosqLog(C.MOSQ_LOG_WARNING, "%s: invalid fail_open=%q, keeping existing value %t",
-					logPrefix, v, failOpen)
+				mosqLog(C.MOSQ_LOG_WARNING, "mosq-pg: invalid fail_open=%q, keeping existing value %t",
+					v, failOpen)
 			}
 		case "enforce_bind":
 			if parsed, ok := parseBoolOption(v); ok {
 				enforceBind = parsed
 			} else {
-				mosqLog(C.MOSQ_LOG_WARNING, "%s: invalid enforce_bind=%q, keeping existing value %t",
-					logPrefix, v, enforceBind)
+				mosqLog(C.MOSQ_LOG_WARNING, "mosq-pg: invalid enforce_bind=%q, keeping existing value %t",
+					v, enforceBind)
 			}
 		}
 	}
@@ -229,16 +223,14 @@ func go_mosq_plugin_init(id *C.mosquitto_plugin_id_t, userdata *unsafe.Pointer,
 		safeDSN(pgDSN), int(timeout/time.Millisecond), failOpen, enforceBind)
 
 	// 验证 PG 配置；数据库暂不可用时不阻塞插件加载
-	if _, err := buildPoolConfig(); err != nil {
+	if _, err := poolConfig(); err != nil {
 		mosqLog(C.MOSQ_LOG_ERR, "mosq-pg: invalid pg_dsn (%s): %v", safeDSN(pgDSN), err)
 		return C.MOSQ_ERR_UNKNOWN
 	}
 	ctx, cancel := ctxTimeout()
 	defer cancel()
-	if _, created, err := ensurePool(ctx); err != nil {
+	if _, err := ensurePool(ctx); err != nil {
 		mosqLog(C.MOSQ_LOG_WARNING, "mosq-pg: initial pg connection failed: %v (will retry lazily)", err)
-	} else if created {
-		mosqLog(C.MOSQ_LOG_INFO, "mosq-pg: initial connection to PostgreSQL established")
 	}
 
 	// 注册回调
@@ -311,12 +303,9 @@ func dbAuth(username, password, clientID string) (bool, error) {
 	ctx, cancel := ctxTimeout()
 	defer cancel()
 
-	p, created, err := ensurePool(ctx)
+	p, err := ensurePool(ctx)
 	if err != nil {
 		return false, err
-	}
-	if created {
-		mosqLog(C.MOSQ_LOG_INFO, "mosq-pg: connected to PostgreSQL successfully")
 	}
 
 	var hash string
@@ -352,29 +341,6 @@ func dbAuth(username, password, clientID string) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-func mqttMatch(pattern, topic, username, clientID string) bool {
-	p := strings.ReplaceAll(pattern, "{username}", username)
-	p = strings.ReplaceAll(p, "{clientid}", clientID)
-	ps := strings.Split(p, "/")
-	ts := strings.Split(topic, "/")
-	for i := 0; i < len(ps); i++ {
-		if i >= len(ts) {
-			return ps[i] == "#" && i == len(ps)-1
-		}
-		switch ps[i] {
-		case "#":
-			return i == len(ps)-1
-		case "+":
-			// pass
-		default:
-			if ps[i] != ts[i] {
-				return false
-			}
-		}
-	}
-	return len(ps) == len(ts)
 }
 
 func main() {}
