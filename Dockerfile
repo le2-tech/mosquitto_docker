@@ -21,6 +21,6 @@ RUN make build bcryptgen
 FROM eclipse-mosquitto:2
 # Copy plugin and example config into the image
 COPY --from=build /src/build/mosq_pg_auth.so /mosquitto/plugins/mosq_pg_auth.so
-COPY mosquitto.conf /mosquitto/config/mosquitto.conf
-EXPOSE 1883
-CMD ["/docker-entrypoint.sh", "/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+#COPY mosquitto.conf /mosquitto/config/mosquitto.conf
+#EXPOSE 1883
+#CMD ["/docker-entrypoint.sh", "/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
