@@ -33,8 +33,7 @@ docker-run:
 	docker run --rm -it --name mosq \
 	  --network host \
 	  -v $(PWD)/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
-	  -v $(PWD)/build/mosq_pg_auth.so:/mosquitto/plugins/mosq_pg_auth.so:ro \
-	  eclipse-mosquitto:2
+	  mosq-pg-v5:latest
 
 local-run: build
 	mosquitto -c ./mosquitto.conf -v
