@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mosquitto
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:

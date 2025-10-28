@@ -14,7 +14,7 @@ WORKDIR /src
 COPY go.mod .
 RUN go mod download
 COPY . .
-RUN make build-prod bcryptgen
+RUN make build-prod
 
 
 # https://packages.debian.org/search?keywords=mosquitto
