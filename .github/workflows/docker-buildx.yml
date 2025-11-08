@@ -2,23 +2,33 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: ["main", "master"]
-    tags: ["v*", "RELEASE.*"] # 按需保留你的标签模式
+    branches: [ "main", "master" ]
+    tags: [ "v*", "RELEASE.*" ] # 按需保留你的标签模式
   pull_request:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: "ghcr 或 dockerhub"
+        required: false
+        default: "ghcr"
 
 permissions:
   contents: read
   packages: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/mosquitto
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    env:
+      PROVIDER: ${{ (github.event.inputs.provider != '' && github.event.inputs.provider) || vars.PROVIDER || 'ghcr' }}
+      REGISTRY: ${{ (((github.event.inputs.provider != '' && github.event.inputs.provider) || vars.PROVIDER || 'ghcr') == 'ghcr') && 'ghcr.io' || 'docker.io' }}
+      IMAGE:
+        ${{ (((github.event.inputs.provider != '' && github.event.inputs.provider) || vars.PROVIDER || 'ghcr') == 'ghcr')
+        && format('{0}/mosquitto', github.repository_owner) || format('{0}/mosquitto', vars.DOCKERHUB_NAMESPACE) }}
     steps:
       - name: Checkout
         uses: actions/checkout@main
@@ -34,16 +44,14 @@ jobs:
       - uses: docker/login-action@master
         with:
           registry: ${{ env.REGISTRY }}
-          # username: ${{ secrets.DOCKERHUB_USERNAME }}
-          # password: ${{ secrets.DOCKERHUB_TOKEN }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ env.PROVIDER == 'ghcr' && github.actor || vars.DOCKERHUB_NAMESPACE }}
+          password: ${{ env.PROVIDER == 'ghcr' && secrets.GITHUB_TOKEN || secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@master
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -59,3 +67,5 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
