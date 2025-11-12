@@ -1,9 +1,9 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: [ "main", "master" ]
-    tags: [ "v*", "RELEASE.*" ] # 按需保留你的标签模式
+  #  push:
+  #    branches: [ "main", "master" ]
+  #    tags: [ "v*", "RELEASE.*" ] # 按需保留你的标签模式
   pull_request:
   workflow_dispatch:
     inputs:

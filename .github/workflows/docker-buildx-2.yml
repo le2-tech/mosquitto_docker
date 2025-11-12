@@ -1,0 +1,118 @@
+name: Build & Push Docker image (GHCR, hosted runners, temp-tags manifest)
+
+on:
+  #  push:
+  #    branches: [ "main" ]
+  #    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@master
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+  build:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - short: amd64
+            platform: linux/amd64
+            runs_on: ubuntu-24.04
+          - short: arm64
+            platform: linux/arm64
+            runs_on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@master
+        with: { install: true }
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@master
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (native ${{ matrix.platform }})
+        uses: docker/build-push-action@master
+        with:
+          context: .
+          platforms: ${{ matrix.platform }} # 原生构建，无 QEMU
+          push: ${{ github.event_name != 'pull_request' }}
+          # 临时标签，用于后续合成 manifest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}-${{ matrix.short }}
+          labels: ${{ needs.meta.outputs.labels }}
+          # 官方 runner 用 gha 缓存即可
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: true
+
+  manifest:
+    needs: [ meta, build ]
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@master
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create & push multi-arch manifest
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          TAGS: ${{ needs.meta.outputs.tags }}
+        run: |
+          set -Eeuxo pipefail
+
+          # 直接把 metadata 的“完整引用”作为 --tag 传入；去掉空行与首尾空白
+          TAG_ARGS=""
+          while IFS= read -r tag; do
+            tag="$(echo "$tag" | xargs)"    # trim
+            [ -z "$tag" ] && continue
+            TAG_ARGS="$TAG_ARGS --tag $tag"
+          done <<< "$TAGS"
+
+          # 合成多架构 manifest（使用两个临时标签作为来源）
+          docker buildx imagetools create \
+            $TAG_ARGS \
+            "$IMAGE:${GITHUB_SHA}-amd64" \
+            "$IMAGE:${GITHUB_SHA}-arm64"
+
+      - name: Inspect (debug)
+        run: |
+          first_tag="$(printf "%s\n" "${{ needs.meta.outputs.tags }}" | head -n1)"
+          docker buildx imagetools inspect "$first_tag"
